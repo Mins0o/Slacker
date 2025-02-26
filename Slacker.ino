@@ -25,6 +25,19 @@ https://watchy.sqfmi.com
 
 class WatchFace : public Watchy {  // inherit and extend Watchy class
   using Watchy::Watchy;
+  float temperature_;
+  float min_temp_;
+  float max_temp_;
+  weatherData currentWeather;
+  int weatherIntervalCounter = -1;
+  long gmtOffset = 0;
+  
+  String weatherQueryURL;
+  String weatherResponse;
+  String forecastQueryURL;
+  String forecastResponse;
+  bool forecastFetched = false;
+  bool weatherUpdated_ = false;
 
  public:
   void drawWatchFace() {  // override this method to customize how the watch
@@ -188,13 +201,13 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     display.setTextColor(light ? GxEPD_BLACK : GxEPD_WHITE);
     display.print(textstring);
     weatherData currentWeather = getWeatherData();
-    String temperature = String(currentWeather.temperature);
+    String temperature = String(temperature_);
     int16_t weatherConditionCode = currentWeather.weatherConditionCode;
     textstring = temperature;
     textstring += "|";
-    textstring += (int)floor(currentWeather.min_temp);
+    textstring += (int)floor(min_temp_);
     textstring += "|";
-    textstring += (int)ceil(currentWeather.max_temp);
+    textstring += (int)ceil(max_temp_);
     display.getTextBounds(textstring, 0, 0, &x1, &y1, &w, &h);
     display.setTextColor(light ? GxEPD_BLACK : GxEPD_WHITE);
 
@@ -244,6 +257,297 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     ////    display.println(forecastQueryURL);
     ////    display.println(forecastResponse);
     //    display.setTextWrap(false);
+  }
+
+
+  weatherData getWeatherData() {
+    return _getWeatherData(settings.cityID, settings.lat, settings.lon,
+                           settings.weatherUnit, settings.weatherLang,
+                           settings.weatherURL, settings.weatherAPIKey,
+                           settings.weatherUpdateInterval = 30);
+  }
+  
+  weatherData _getWeatherData(const String& cityID, const String& lat,
+                                      const String& lon, const String& units,
+                                      const String& lang, const String& url,
+                                      const String& apiKey,
+                                      uint8_t updateInterval) {
+    currentWeather.isMetric = units == String("metric");
+    if (weatherIntervalCounter < 0) {  //-1 on first run, set to updateInterval
+      weatherIntervalCounter = updateInterval;
+    }
+    if (weatherIntervalCounter >=
+        updateInterval) {  // only update if WEATHER_UPDATE_INTERVAL has elapsed
+                           // i.e. 30 minutes
+      if (connectWiFi()) {
+        HTTPClient http;  // Use Weather API for live data if WiFi is connected
+        http.setConnectTimeout(3000);  // 3 second max timeout
+        weatherQueryURL = url;
+        weatherResponse = "";
+        if (cityID != "") {
+          weatherQueryURL.replace("{cityID}", cityID);
+        } else {
+          weatherQueryURL.replace("{lat}", lat);
+          weatherQueryURL.replace("{lon}", lon);
+        }
+        weatherQueryURL.replace("{units}", units);
+        weatherQueryURL.replace("{lang}", lang);
+        weatherQueryURL.replace("{apiKey}", apiKey);
+        http.begin(weatherQueryURL.c_str());
+        int httpResponseCode = http.GET();
+        if (httpResponseCode == 200) {
+          weatherResponse = http.getString();
+          JSONVar responseObject = JSON.parse(weatherResponse);
+          currentWeather.temperature = (double)responseObject["main"]["temp"];
+          temperature_ = currentWeather.temperature;
+          currentWeather.weatherConditionCode =
+              int(responseObject["weather"][0]["id"]);
+          currentWeather.weatherDescription =
+              JSONVar::stringify(responseObject["weather"][0]["main"]);
+          currentWeather.external = true;
+          breakTime((time_t)(int)responseObject["sys"]["sunrise"],
+                    currentWeather.sunrise);
+          breakTime((time_t)(int)responseObject["sys"]["sunset"],
+                    currentWeather.sunset);
+          // sync NTP during weather API call and use timezone of lat & lon
+          gmtOffset = int(responseObject["timezone"]);
+          syncNTP(gmtOffset);
+          weatherUpdated_ = true;
+        } else {
+          // http error
+        }
+        http.end();
+        // turn off radios
+        WiFi.mode(WIFI_OFF);
+        btStop();
+      } else {  // No WiFi, use internal temperature sensor
+        uint8_t temperature = sensor.readTemperature();  // celsius
+        if (!currentWeather.isMetric) {
+          temperature = temperature * 9. / 5. + 32.;  // fahrenheit
+        }
+        currentWeather.temperature = temperature;
+        temperature_ = temperature;
+        currentWeather.weatherConditionCode = 800;
+        currentWeather.external = false;
+      }
+      if (connectWiFi()) {
+        float min_temp_backup = min_temp_;
+        float max_temp_backup = max_temp_;
+        min_temp_ = currentWeather.temperature;
+        max_temp_ = currentWeather.temperature;
+        getMinMaxTemperature(min_temp_, max_temp_,
+                             weatherQueryURL);
+        if (!forecastFetched) {
+          min_temp_ = min_temp_backup;
+          max_temp_ = max_temp_backup;
+        }
+        WiFi.mode(WIFI_OFF);
+        btStop();
+      }
+      weatherIntervalCounter = 0;
+      weatherUpdated_ = true;
+    } else {
+      weatherIntervalCounter++;
+    }
+    return currentWeather;
+  }
+  
+  void getMinMaxTemperature(float& minTemp, float& maxTemp,
+                                    const String& finished_url) {
+    HTTPClient http;  // Use Weather API for live data if WiFi is connected
+    http.setConnectTimeout(3000);  // 3 second max timeout
+    forecastQueryURL = finished_url;
+    forecastQueryURL.replace("2.5/weather", "2.5/forecast");
+    forecastQueryURL += "&cnt=10";
+    http.begin(forecastQueryURL.c_str());
+    int httpResponseCode = http.GET();
+    forecastResponse = "failed";
+    if (httpResponseCode == 200) {
+      forecastFetched = true;
+      forecastResponse = http.getString();
+      JSONVar responseObject = JSON.parse(forecastResponse);
+      auto forecast_list = responseObject["list"];
+      size_t list_size = forecast_list.length();
+      float temp_min = minTemp;
+      float temp_max = maxTemp;
+      for (int ii = 0; ii < list_size && ii < 10; ++ii) {
+        JSONVar forecast = forecast_list[ii]["main"];
+        temp_min = (double)forecast["temp_min"];
+        temp_max = (double)forecast["temp_max"];
+        if (temp_min < minTemp) {
+          minTemp = temp_min;
+        }
+        if (temp_max > maxTemp) {
+          maxTemp = temp_max;
+        }
+      }
+    } else {
+      // http error
+      forecastResponse += httpResponseCode;
+      forecastResponse += http.getString();
+    }
+    http.end();
+  }
+
+  void handleButtonPress() {
+    uint64_t wakeupBit = esp_sleep_get_ext1_wakeup_status();
+    // Menu Button
+    if (wakeupBit & MENU_BTN_MASK) {
+      if (guiState ==
+          WATCHFACE_STATE) {  // enter menu state if coming from watch face
+        showMenu(menuIndex, false);
+      } else if (guiState ==
+                 MAIN_MENU_STATE) {  // if already in menu, then select menu item
+        switch (menuIndex) {
+          case 0:
+            showAbout();
+            break;
+          case 1:
+            showBuzz();
+            break;
+          case 2:
+            showAccelerometer();
+            break;
+          case 3:
+            setTime();
+            break;
+          case 4:
+            setupWifi();
+            break;
+          case 5:
+            showUpdateFW();
+            break;
+          case 6:
+            showSyncNTP();
+            break;
+          default:
+            break;
+        }
+      } else if (guiState == FW_UPDATE_STATE) {
+        updateFWBegin();
+      }
+    }
+    // Back Button
+    else if (wakeupBit & BACK_BTN_MASK) {
+      if (guiState == MAIN_MENU_STATE) {  // exit to watch face if already in menu
+        RTC.read(currentTime);
+        showWatchFace(false);
+      } else if (guiState == APP_STATE) {
+        showMenu(menuIndex, false);  // exit to menu if already in app
+      } else if (guiState == FW_UPDATE_STATE) {
+        showMenu(menuIndex, false);  // exit to menu if already in app
+      } else if (guiState == WATCHFACE_STATE) {
+        RTC.clearAlarm();
+        RTC.read(currentTime);
+        showWatchFace(true);
+        return;
+      }
+    }
+    // Up Button
+    else if (wakeupBit & UP_BTN_MASK) {
+      if (guiState == MAIN_MENU_STATE) {  // increment menu index
+        menuIndex--;
+        if (menuIndex < 0) {
+          menuIndex = MENU_LENGTH - 1;
+        }
+        showMenu(menuIndex, true);
+      } else if (guiState == WATCHFACE_STATE) {
+        return;
+      }
+    }
+    // Down Button
+    else if (wakeupBit & DOWN_BTN_MASK) {
+      if (guiState == MAIN_MENU_STATE) {  // decrement menu index
+        menuIndex++;
+        if (menuIndex > MENU_LENGTH - 1) {
+          menuIndex = 0;
+        }
+        showMenu(menuIndex, true);
+      } else if (guiState == WATCHFACE_STATE) {
+        return;
+      }
+    }
+  
+    /***************** fast menu *****************/
+    bool timeout = false;
+    long lastTimeout = millis();
+    pinMode(MENU_BTN_PIN, INPUT);
+    pinMode(BACK_BTN_PIN, INPUT);
+    pinMode(UP_BTN_PIN, INPUT);
+    pinMode(DOWN_BTN_PIN, INPUT);
+    while (!timeout) {
+      if (millis() - lastTimeout > 5000) {
+        timeout = true;
+      } else {
+        if (digitalRead(MENU_BTN_PIN) == ACTIVE_LOW) {
+          lastTimeout = millis();
+          if (guiState ==
+              MAIN_MENU_STATE) {  // if already in menu, then select menu item
+            switch (menuIndex) {
+              case 0:
+                showAbout();
+                break;
+              case 1:
+                showBuzz();
+                break;
+              case 2:
+                showAccelerometer();
+                break;
+              case 3:
+                setTime();
+                break;
+              case 4:
+                setupWifi();
+                break;
+              case 5:
+                showUpdateFW();
+                break;
+              case 6:
+                showSyncNTP();
+                break;
+              default:
+                break;
+            }
+          } else if (guiState == FW_UPDATE_STATE) {
+            updateFWBegin();
+          }
+        } else if (digitalRead(BACK_BTN_PIN) == ACTIVE_LOW) {
+          lastTimeout = millis();
+          if (guiState ==
+              MAIN_MENU_STATE) {  // exit to watch face if already in menu
+            RTC.read(currentTime);
+            showWatchFace(false);
+            break;  // leave loop
+          } else if (guiState == APP_STATE) {
+            showMenu(menuIndex, false);  // exit to menu if already in app
+          } else if (guiState == FW_UPDATE_STATE) {
+            showMenu(menuIndex, false);  // exit to menu if already in app
+          } else if (guiState == WATCHFACE_STATE) {
+            RTC.clearAlarm();
+            RTC.read(currentTime);
+            showWatchFace(true);
+          }
+        } else if (digitalRead(UP_BTN_PIN) == ACTIVE_LOW) {
+          lastTimeout = millis();
+          if (guiState == MAIN_MENU_STATE) {  // increment menu index
+            menuIndex--;
+            if (menuIndex < 0) {
+              menuIndex = MENU_LENGTH - 1;
+            }
+            showFastMenu(menuIndex);
+          }
+        } else if (digitalRead(DOWN_BTN_PIN) == ACTIVE_LOW) {
+          lastTimeout = millis();
+          if (guiState == MAIN_MENU_STATE) {  // decrement menu index
+            menuIndex++;
+            if (menuIndex > MENU_LENGTH - 1) {
+              menuIndex = 0;
+            }
+            showFastMenu(menuIndex);
+          }
+        }
+      }
+    }
   }
 };
 
