@@ -19,6 +19,7 @@ https://watchy.sqfmi.com
 
 #include "LiberationSansNarrow_Bold8pt7b.h"
 #include "Teko_Regular20pt7b.h"
+#include "icons.h"
 #include "prompt.h"
 #include "settings.h"
 
@@ -32,7 +33,6 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     int16_t x1, y1;
     uint16_t w, h;
     String textstring;
-    int temp;
     bool light = true;  // left this here if someone wanted to tweak for dark
 
     // resets step counter at midnight everyday
@@ -53,16 +53,14 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     display.setCursor(0, 10);
     display.print("sk@darkstar:/~");
     display.setCursor(0, 23);
-    display.print("$ ls -l");
+    display.print("$ steps; weather");
     display.setCursor(0, 36);
-    display.print("total (steps)");  // use step # for total
+    display.print("total steps: ");  // use step # for total
     display.setCursor(0, 49);
-    display.print("4 drwxr-xr-x 5 sk sk 4K Jn 1 Dcs");
-    display.setCursor(0, 62);
-    display.print("4 drwxr-xr-x 2 sk sk 4K Ag 9 Dnl");
+    display.print("temp(--|L|H):    climate:");
     display.setCursor(0, 75);
     display.print("sk@darkstar:/~");
-    display.setCursor(0, 88);
+    display.setCursor(0, 89);
     display.print("$ date");
 
     // draw day of week
@@ -74,25 +72,17 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     textstring += " ";
     textstring += monthShortStr(currentTime.Month);
     textstring += " ";
-    textstring += currentTime.Year + 1970;
+    textstring += currentTime.Year - 30;
     textstring += " ";
 
     // draw time
     display.setFont(&LiberationSansNarrow_Bold8pt7b);
     if (currentTime.Hour > 0 && currentTime.Hour < 10) {
       textstring += "0";
-    } else if (currentTime.Hour > 12 && currentTime.Hour <= 21) {
-      textstring += "0";
     } else {
       textstring += "";
     }
-    if (currentTime.Hour > 0 && currentTime.Hour <= 12) {
-      textstring += currentTime.Hour;
-    } else if (currentTime.Hour < 1) {
-      textstring += 12;
-    } else {
-      textstring += ((currentTime.Hour + 11) % 12) + 1;
-    }
+    textstring += currentTime.Hour;
 
     textstring += ":";
     if (currentTime.Minute < 10) {
@@ -101,6 +91,14 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
       textstring += "";
     }
     textstring += currentTime.Minute;
+
+    textstring += ":";
+    if (currentTime.Second < 10) {
+      textstring += "0";
+    } else {
+      textstring += "";
+    }
+    textstring += currentTime.Second;
 
     // this section adds AM or PM to the display
     if (currentTime.Hour >= 12) {
@@ -113,7 +111,7 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     // To change Time Zones, including Daylight Savings Time, see the settings.h
     // section
 
-    display.setCursor(0, 102);
+    display.setCursor(0, 103);
     display.print(textstring);
 
     // drawTimeBold
@@ -157,28 +155,30 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     display.getTextBounds(textstring, 0, 0, &x1, &y1, &w, &h);
     display.setCursor(0, 116);
     display.print("sk@darkstar:/~");
-    display.setCursor(0, 129);
-    display.print("$ upower -i/UPwr/dvcs/btry_BT0");
-    display.setCursor(0, 143);
+    display.setCursor(0, 130);
+    display.print("$ upower -i /UPW/dev/btry_BT0");
+    display.setCursor(0, 144);
     display.print("voltage:");
-    display.setCursor(120, 143);
+    display.setCursor(90, 144);
     display.print(VBAT);
-    display.setCursor(0, 157);
+    display.print(" V");
+    display.setCursor(0, 158);
     display.print("percentage:");
-    display.setCursor(120, 157);
+    display.setCursor(90, 158);
     display.print(batteryLevel);
-    display.setCursor(143, 157);
+    display.setCursor(143, 158);
     display.print("%");
-    display.setCursor(0, 171);
+    display.setCursor(0, 173);
     display.print("technology:");
-    display.setCursor(120, 171);
+    display.setCursor(90, 173);
     display.print("lithium-pol");
-    display.setCursor(0, 185);
+    display.setCursor(0, 187);
     display.print("sk@darkstar:/~");
     display.setCursor(0, 199);
     display.print("$ ");
     // draw image
-    display.drawBitmap(12, 187, epd_bitmap_prompt, 7, 14, GxEPD_BLACK);
+    display.drawBitmap(12, 189, epd_bitmap_prompt, 7, 14,
+                       light ? GxEPD_BLACK : GxEPD_WHITE);
 
     // draw steps
     display.setFont(&LiberationSansNarrow_Bold8pt7b);
@@ -187,6 +187,63 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     display.setCursor(75, 36);
     display.setTextColor(light ? GxEPD_BLACK : GxEPD_WHITE);
     display.print(textstring);
+    weatherData currentWeather = getWeatherData();
+    String temperature = String(currentWeather.temperature);
+    int16_t weatherConditionCode = currentWeather.weatherConditionCode;
+    textstring = temperature;
+    textstring += "|";
+    textstring += (int)floor(currentWeather.min_temp);
+    textstring += "|";
+    textstring += (int)ceil(currentWeather.max_temp);
+    display.getTextBounds(textstring, 0, 0, &x1, &y1, &w, &h);
+    display.setTextColor(light ? GxEPD_BLACK : GxEPD_WHITE);
+
+    display.setCursor(12, 62);
+    display.print(textstring);
+    display.println(" `C");
+    display.setCursor(12, 62);
+    forecastFetched ? display.print("_") : 0;
+    display.setCursor(0, 49);
+    weatherUpdated_ ? display.print("_") : 0;
+
+    const unsigned char* weatherIcon;
+
+    if (WIFI_CONFIGURED) {
+      // https://openweathermap.org/weather-conditions
+      if (weatherConditionCode > 801) {  // Cloudy
+        weatherIcon = cloudy;
+      } else if (weatherConditionCode == 801) {  // Few Clouds
+        weatherIcon = cloudsun;
+      } else if (weatherConditionCode == 800) {  // Clear
+        weatherIcon = sunny;
+      } else if (weatherConditionCode >= 700) {  // Atmosphere
+        weatherIcon = atmosphere;
+      } else if (weatherConditionCode >= 600) {  // Snow
+        weatherIcon = snow;
+      } else if (weatherConditionCode >= 500) {  // Rain
+        weatherIcon = rain;
+      } else if (weatherConditionCode >= 300) {  // Drizzle
+        weatherIcon = drizzle;
+      } else if (weatherConditionCode >= 200) {  // Thunderstorm
+        weatherIcon = thunderstorm;
+      }
+    } else {
+      weatherIcon = chip;
+    }
+    display.drawBitmap(147, 33, weatherIcon, 48, 32,
+                       light ? GxEPD_BLACK : GxEPD_WHITE);
+    display.drawBitmap(169, 144, WIFI_CONFIGURED ? wifi : wifioff, 26, 18,
+                       light ? GxEPD_BLACK : GxEPD_WHITE);
+
+    // debug
+    //    display.fillScreen(0x7f);
+    //    display.setCursor(0, 15);
+    //    display.setTextWrap(true);
+    ////    display.println(weatherQueryURL);
+    ////    display.println(weatherResponse);
+    ////    display.println(forecastQueryURL);
+    ////    display.println(forecastResponse);
+    //    display.setTextWrap(false);
   }
 };
 
