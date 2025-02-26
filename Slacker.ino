@@ -23,21 +23,23 @@ https://watchy.sqfmi.com
 #include "prompt.h"
 #include "settings.h"
 
+#define ACTIVE_LOW 1
+RTC_DATA_ATTR bool forecastFetched_g = false;
+RTC_DATA_ATTR bool weatherUpdated_g = false;
+RTC_DATA_ATTR int weatherIntervalCounter_g = -1;
+RTC_DATA_ATTR weatherData currentWeather_g;
+RTC_DATA_ATTR float min_temp_g;
+RTC_DATA_ATTR float max_temp_g;
+
 class WatchFace : public Watchy {  // inherit and extend Watchy class
   using Watchy::Watchy;
   float temperature_;
-  float min_temp_;
-  float max_temp_;
-  weatherData currentWeather;
-  int weatherIntervalCounter = -1;
   long gmtOffset = 0;
   
   String weatherQueryURL;
   String weatherResponse;
   String forecastQueryURL;
   String forecastResponse;
-  bool forecastFetched = false;
-  bool weatherUpdated_ = false;
 
  public:
   void drawWatchFace() {  // override this method to customize how the watch
@@ -46,7 +48,7 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     int16_t x1, y1;
     uint16_t w, h;
     String textstring;
-    bool light = true;  // left this here if someone wanted to tweak for dark
+    bool light = false;  // left this here if someone wanted to tweak for dark
 
     // resets step counter at midnight everyday
     if (currentTime.Hour == 00 && currentTime.Minute == 00) {
@@ -200,24 +202,24 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     display.setCursor(75, 36);
     display.setTextColor(light ? GxEPD_BLACK : GxEPD_WHITE);
     display.print(textstring);
-    weatherData currentWeather = getWeatherData();
-    String temperature = String(temperature_);
-    int16_t weatherConditionCode = currentWeather.weatherConditionCode;
+    currentWeather_g = getWeatherData();
+    String temperature = String(currentWeather_g.temperature);
+    int16_t weatherConditionCode = currentWeather_g.weatherConditionCode;
     textstring = temperature;
     textstring += "|";
-    textstring += (int)floor(min_temp_);
+    textstring += (int)floor(min_temp_g);
     textstring += "|";
-    textstring += (int)ceil(max_temp_);
+    textstring += (int)ceil(max_temp_g);
     display.getTextBounds(textstring, 0, 0, &x1, &y1, &w, &h);
     display.setTextColor(light ? GxEPD_BLACK : GxEPD_WHITE);
 
-    display.setCursor(12, 62);
+    display.setCursor(35, 62);
     display.print(textstring);
     display.println(" `C");
-    display.setCursor(12, 62);
-    forecastFetched ? display.print("_") : 0;
+    display.setCursor(35, 62);
+    forecastFetched_g ? display.print("_") : 0;
     display.setCursor(0, 49);
-    weatherUpdated_ ? display.print("_") : 0;
+    weatherUpdated_g ? display.print("_") : 0;
 
     const unsigned char* weatherIcon;
 
@@ -272,16 +274,16 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
                                       const String& lang, const String& url,
                                       const String& apiKey,
                                       uint8_t updateInterval) {
-    currentWeather.isMetric = units == String("metric");
-    if (weatherIntervalCounter < 0) {  //-1 on first run, set to updateInterval
-      weatherIntervalCounter = updateInterval;
+    currentWeather_g.isMetric = units == String("metric");
+    if (weatherIntervalCounter_g < 0) {  //-1 on first run, set to updateInterval
+      weatherIntervalCounter_g = updateInterval;
     }
-    if (weatherIntervalCounter >=
+    if (weatherIntervalCounter_g >=
         updateInterval) {  // only update if WEATHER_UPDATE_INTERVAL has elapsed
                            // i.e. 30 minutes
       if (connectWiFi()) {
         HTTPClient http;  // Use Weather API for live data if WiFi is connected
-        http.setConnectTimeout(3000);  // 3 second max timeout
+        http.setConnectTimeout(1500);  // 3 second max timeout
         weatherQueryURL = url;
         weatherResponse = "";
         if (cityID != "") {
@@ -298,21 +300,19 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
         if (httpResponseCode == 200) {
           weatherResponse = http.getString();
           JSONVar responseObject = JSON.parse(weatherResponse);
-          currentWeather.temperature = (double)responseObject["main"]["temp"];
-          temperature_ = currentWeather.temperature;
-          currentWeather.weatherConditionCode =
+          currentWeather_g.temperature = (double)responseObject["main"]["temp"];
+          currentWeather_g.weatherConditionCode =
               int(responseObject["weather"][0]["id"]);
-          currentWeather.weatherDescription =
+          currentWeather_g.weatherDescription =
               JSONVar::stringify(responseObject["weather"][0]["main"]);
-          currentWeather.external = true;
+          currentWeather_g.external = true;
           breakTime((time_t)(int)responseObject["sys"]["sunrise"],
-                    currentWeather.sunrise);
+                    currentWeather_g.sunrise);
           breakTime((time_t)(int)responseObject["sys"]["sunset"],
-                    currentWeather.sunset);
+                    currentWeather_g.sunset);
           // sync NTP during weather API call and use timezone of lat & lon
           gmtOffset = int(responseObject["timezone"]);
           syncNTP(gmtOffset);
-          weatherUpdated_ = true;
         } else {
           // http error
         }
@@ -322,40 +322,41 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
         btStop();
       } else {  // No WiFi, use internal temperature sensor
         uint8_t temperature = sensor.readTemperature();  // celsius
-        if (!currentWeather.isMetric) {
+        if (!currentWeather_g.isMetric) {
           temperature = temperature * 9. / 5. + 32.;  // fahrenheit
         }
-        currentWeather.temperature = temperature;
-        temperature_ = temperature;
-        currentWeather.weatherConditionCode = 800;
-        currentWeather.external = false;
+        currentWeather_g.temperature = temperature;
+        currentWeather_g.weatherConditionCode = 800;
+        currentWeather_g.external = false;
       }
       if (connectWiFi()) {
-        float min_temp_backup = min_temp_;
-        float max_temp_backup = max_temp_;
-        min_temp_ = currentWeather.temperature;
-        max_temp_ = currentWeather.temperature;
-        getMinMaxTemperature(min_temp_, max_temp_,
+        float min_temp_backup = min_temp_g;
+        float max_temp_backup = max_temp_g;
+        min_temp_g = currentWeather_g.temperature;
+        max_temp_g = currentWeather_g.temperature;
+        getMinMaxTemperature(min_temp_g, max_temp_g,
                              weatherQueryURL);
-        if (!forecastFetched) {
-          min_temp_ = min_temp_backup;
-          max_temp_ = max_temp_backup;
+        if (!forecastFetched_g) {
+          min_temp_g = min_temp_backup;
+          max_temp_g = max_temp_backup;
         }
         WiFi.mode(WIFI_OFF);
         btStop();
       }
-      weatherIntervalCounter = 0;
-      weatherUpdated_ = true;
+      weatherIntervalCounter_g = 0;
+      weatherUpdated_g = true;
     } else {
-      weatherIntervalCounter++;
+      weatherIntervalCounter_g++;
+      weatherUpdated_g = false;
+      forecastFetched_g = false;
     }
-    return currentWeather;
+    return currentWeather_g;
   }
   
   void getMinMaxTemperature(float& minTemp, float& maxTemp,
                                     const String& finished_url) {
     HTTPClient http;  // Use Weather API for live data if WiFi is connected
-    http.setConnectTimeout(3000);  // 3 second max timeout
+    http.setConnectTimeout(1500);  // 3 second max timeout
     forecastQueryURL = finished_url;
     forecastQueryURL.replace("2.5/weather", "2.5/forecast");
     forecastQueryURL += "&cnt=10";
@@ -363,7 +364,7 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     int httpResponseCode = http.GET();
     forecastResponse = "failed";
     if (httpResponseCode == 200) {
-      forecastFetched = true;
+      forecastFetched_g = true;
       forecastResponse = http.getString();
       JSONVar responseObject = JSON.parse(forecastResponse);
       auto forecast_list = responseObject["list"];
@@ -385,6 +386,7 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
       // http error
       forecastResponse += httpResponseCode;
       forecastResponse += http.getString();
+      forecastFetched_g = false;
     }
     http.end();
   }
