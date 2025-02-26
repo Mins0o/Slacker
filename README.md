@@ -1,7 +1,8 @@
 # Slacker
-https://github.com/uCBill/Slacker
-Slacker Watchface for Watchy (Linux like Display screen) by Bill Eichner
-based on SmartWatch (See Below)
+https://github.com/uCBill/Slacker  
+Slacker Watchface for Watchy (Linux like Display screen) by Bill Eichner  
+based on SmartWatch (See Below)  
+![Slacker.gif](./Slacker.gif)
 
 Version 1.2.1
 Improved Battery percentage accuracy.
