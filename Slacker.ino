@@ -30,12 +30,13 @@ RTC_DATA_ATTR int weatherIntervalCounter_g = -1;
 RTC_DATA_ATTR weatherData currentWeather_g;
 RTC_DATA_ATTR float min_temp_g;
 RTC_DATA_ATTR float max_temp_g;
+RTC_DATA_ATTR bool light =
+    true;  // left this here if someone wanted to tweak for dark
 
 class WatchFace : public Watchy {  // inherit and extend Watchy class
   using Watchy::Watchy;
-  float temperature_;
   long gmtOffset = 0;
-  
+
   String weatherQueryURL;
   String weatherResponse;
   String forecastQueryURL;
@@ -48,7 +49,6 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     int16_t x1, y1;
     uint16_t w, h;
     String textstring;
-    bool light = false;  // left this here if someone wanted to tweak for dark
 
     // resets step counter at midnight everyday
     if (currentTime.Hour == 00 && currentTime.Minute == 00) {
@@ -261,21 +261,20 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     //    display.setTextWrap(false);
   }
 
-
   weatherData getWeatherData() {
     return _getWeatherData(settings.cityID, settings.lat, settings.lon,
                            settings.weatherUnit, settings.weatherLang,
                            settings.weatherURL, settings.weatherAPIKey,
                            settings.weatherUpdateInterval = 30);
   }
-  
+
   weatherData _getWeatherData(const String& cityID, const String& lat,
-                                      const String& lon, const String& units,
-                                      const String& lang, const String& url,
-                                      const String& apiKey,
-                                      uint8_t updateInterval) {
+                              const String& lon, const String& units,
+                              const String& lang, const String& url,
+                              const String& apiKey, uint8_t updateInterval) {
     currentWeather_g.isMetric = units == String("metric");
-    if (weatherIntervalCounter_g < 0) {  //-1 on first run, set to updateInterval
+    if (weatherIntervalCounter_g <
+        0) {  //-1 on first run, set to updateInterval
       weatherIntervalCounter_g = updateInterval;
     }
     if (weatherIntervalCounter_g >=
@@ -334,8 +333,7 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
         float max_temp_backup = max_temp_g;
         min_temp_g = currentWeather_g.temperature;
         max_temp_g = currentWeather_g.temperature;
-        getMinMaxTemperature(min_temp_g, max_temp_g,
-                             weatherQueryURL);
+        getMinMaxTemperature(min_temp_g, max_temp_g, weatherQueryURL);
         if (!forecastFetched_g) {
           min_temp_g = min_temp_backup;
           max_temp_g = max_temp_backup;
@@ -352,9 +350,9 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     }
     return currentWeather_g;
   }
-  
+
   void getMinMaxTemperature(float& minTemp, float& maxTemp,
-                                    const String& finished_url) {
+                            const String& finished_url) {
     HTTPClient http;  // Use Weather API for live data if WiFi is connected
     http.setConnectTimeout(1500);  // 3 second max timeout
     forecastQueryURL = finished_url;
@@ -398,8 +396,8 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
       if (guiState ==
           WATCHFACE_STATE) {  // enter menu state if coming from watch face
         showMenu(menuIndex, false);
-      } else if (guiState ==
-                 MAIN_MENU_STATE) {  // if already in menu, then select menu item
+      } else if (guiState == MAIN_MENU_STATE) {  // if already in menu, then
+                                                 // select menu item
         switch (menuIndex) {
           case 0:
             showAbout();
@@ -431,7 +429,8 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
     }
     // Back Button
     else if (wakeupBit & BACK_BTN_MASK) {
-      if (guiState == MAIN_MENU_STATE) {  // exit to watch face if already in menu
+      if (guiState ==
+          MAIN_MENU_STATE) {  // exit to watch face if already in menu
         RTC.read(currentTime);
         showWatchFace(false);
       } else if (guiState == APP_STATE) {
@@ -454,6 +453,9 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
         }
         showMenu(menuIndex, true);
       } else if (guiState == WATCHFACE_STATE) {
+        light = light ? false : true;
+        RTC.read(currentTime);
+        showWatchFace(true);
         return;
       }
     }
@@ -469,7 +471,7 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
         return;
       }
     }
-  
+
     /***************** fast menu *****************/
     bool timeout = false;
     long lastTimeout = millis();
@@ -537,6 +539,11 @@ class WatchFace : public Watchy {  // inherit and extend Watchy class
               menuIndex = MENU_LENGTH - 1;
             }
             showFastMenu(menuIndex);
+          } else if (guiState == WATCHFACE_STATE) {
+            light = light ? false : true;
+            RTC.read(currentTime);
+            showWatchFace(true);
+            return;
           }
         } else if (digitalRead(DOWN_BTN_PIN) == ACTIVE_LOW) {
           lastTimeout = millis();
